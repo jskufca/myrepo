@@ -1,0 +1,181 @@
+---
+title: "Attempting to data clean and merge Actilife and GPS data files"
+output: 
+  html_notebook:
+        toc: yes
+        toc_float: true
+
+---
+
+# Loading packages
+
+Our intention is to use packages from the tidyverse and other *tidy* packages to provide a constistant framework.                                                                                                                                                                                                                                                  
+
+```{r}
+library(DT)
+library(plotly)
+library(tidyverse) # data manipulation and visualization - loads several packages
+library(readr) # reading data files
+library(lubridate) # working with dates
+library(tibbletime)
+library(tidyquant)
+library(sf)
+library(tmap)
+library(crosstalk)
+library(leaflet)
+
+
+```
+
+# Data munging
+
+## Load and clean ActiLife Data
+
+Read the file and create new column which encodes data-time as a single variable.
+
+Using `tibbletime` commands, we will make this dataframe "time aware".
+
+We are basing these manipulations off the tutorial 
+http://www.business-science.io/code-tools/2017/10/26/demo_week_tibbletime.html .
+
+
+```{r warning=FALSE,message=FALSE}
+df=read_csv("Autumn ActiLife Data.csv",skip=10)
+df <- df %>% mutate(Date=mdy(Date)) %>% mutate(date_time=ymd_hms(paste(Date,Time))) %>%
+  janitor::clean_names() %>%
+  as_tbl_time(index = date_time)
+
+
+str(df)
+```
+
+## Load and clean GPS data
+
+First we load as a data frame and create a date-time variable.
+
+
+
+```{r}
+df2 <- read_csv("Autumn 7-1-18.csv") %>% mutate(Date=mdy(Date)) %>% rename(Time='Time (local)') %>%
+  mutate(date_time=ymd_hms(paste(Date,Time))) %>% janitor::clean_names()
+
+
+```
+
+We convert do a tibbletime object and change the periodicity to 1 minute intervals.  
+
+We chose to average all data from time xx:xx:00-xx:xx:59, and then round down to the nearest minute
+
+```{r}
+
+df3_tt=df2 %>%
+    as_tbl_time(index = date_time) %>% 
+  as_period("minutes",side="start" ) %>% mutate(date_time=floor_index(date_time,unit="minutes"))
+
+
+
+```
+
+## Merge the two data frames
+
+We will merge all of the data, recognizing that not all times exist in both data sets, but we also create `dfg`, which restricts to those points with gps data
+
+```{r}
+dffull=full_join(df,df3_tt,by="date_time") 
+
+dfg=right_join(df,df3_tt,by="date_time") 
+
+```
+
+# Some visualizations using ggplot2
+
+```{r eval=FALSE}
+dfg %>% ggplot( aes(x=date_time, y= longitude,col=speed_mi_hr)) +geom_point(aes())
+
+```
+
+```{r eval=FALSE}
+dfg %>% ggplot( aes(x=date_time, y= latitude,col=speed_mi_hr)) +geom_point(aes())
+
+```
+
+```{r eval=FALSE}
+dfg %>% ggplot( aes(x=longitude, y= latitude,col=steps)) +geom_point(aes())
+
+```
+
+# Creating sf object and looking at Maps
+
+We create a *sf* simple features object in an `xy` coordinate system and plot using ggplot.
+
+```{r}
+dfg1=st_as_sf(dfg, coords=c("longitude" ,"latitude"))
+
+#dfg1 %>% ggplot(aes(col=steps)) + geom_sf() +theme_minimal()+ scale_colour_viridis_c()
+
+```
+
+We also plot this data on a `tmap` plot:
+
+```{r}
+tmap_mode("view")
+#tmap_mode("plot")
+tm_shape(dfg1) + 
+  tm_dots("inclinometer_standing")+ 
+  tm_view(alpha = 1,basemaps.alpha = 1)+
+  tm_basemap(c(Canvas = "Esri.WorldGrayCanvas", Imagery = "Esri.WorldImagery",OpenStreet="OpenStreetMap"))
+
+```
+
+
+# Can we do a multiview plot with crosstalk?
+
+
+```{r}
+
+sd=SharedData$new(dfg1)
+
+
+
+p1=tm_shape(sd$data()) + 
+  tm_dots("speed_mi_hr")+ 
+  tm_view(alpha = 1,basemaps.alpha = 1)+
+  tm_basemap(c(Canvas = "Esri.WorldGrayCanvas", Imagery = "Esri.WorldImagery"))
+
+lf <- tmap_leaflet(p1)
+
+p2=datatable(sd)
+
+p3=sd %>% ggplot(aes(x=date_time,y=steps))+geom_point() 
+
+
+
+ggplotly(p3) %>%   highlight("plotly_selected", dynamic = TRUE)
+
+
+p1=leaflet(sd) %>% addProviderTiles("OpenStreetMap") %>% addCircles()
+
+p1
+
+# bscols(p1,datatable(sd))
+
+bscols(p1,ggplotly(p3) %>%   highlight("plotly_selected", dynamic = TRUE))
+
+#bscols( lf, ggplotly(p3) %>% highlight(color="red"))
+
+#bscols( lf, datatable(sd))
+
+#bscols( ggplotly(p3), datatable(sd))
+
+```
+
+
+
+
+
+
+
+
+
+
+
